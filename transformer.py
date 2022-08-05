@@ -46,6 +46,7 @@ class Attention(nn.Module):
     """
 
     def __init__(self, dim: int, n_heads: int = 12, qkv_bias: bool = True, attn_p: float = 0., proj_p: float = 0.):
+        super().__init__()
         self.n_heads = n_heads
         self.dim = dim
         self.head_dim = dim // n_heads
@@ -130,15 +131,13 @@ class MLP(nn.Module):
     def __init__(self, in_features: int, hidden_features: int, out_features: int, p: float = 0.,
                  n_layers: int = 1) -> None:
         super().__init__()
-        mod_list = []
-        mod_list.append(nn.Linear(in_features, hidden_features))
-        mod_list.append(nn.GELU())
+        mod_list = [nn.Linear(in_features, hidden_features), nn.GELU()]
         for _ in range(n_layers - 1):
             mod_list.append(nn.Linear(hidden_features, hidden_features))
             mod_list.append(nn.GELU())
         self.output = nn.Linear(hidden_features, out_features)
         self.drop = nn.Dropout(p)
-        self.mlp = nn.sequential(mod_list)
+        self.mlp = nn.Sequential(*mod_list)
 
     def forward(self, x):
         """
@@ -200,7 +199,7 @@ class Block(nn.Module):
     ):
         super().__init__()
 
-        self.norm1 = nn.LayerNorm(dim, esp=1e-6)
+        self.norm1 = nn.LayerNorm(dim, eps=1e-6)
         self.attn = Attention(
             dim,
             n_heads=n_heads,
@@ -209,7 +208,7 @@ class Block(nn.Module):
             proj_p=p
         )
 
-        self.norm2 = nn.LayerNorm(dim, esp=1e-6)
+        self.norm2 = nn.LayerNorm(dim, eps=1e-6)
         hidden_features = int(dim * mlp_ratio)
         if not out_features:
             out_features = dim
@@ -247,7 +246,30 @@ class Embed(nn.Module):
         self.enc.append(nn.Linear(enc_features * mlp_ratio, enc_features))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.enc(self.norm(x.permute(0, 2, 1)).permute(0, 2, 1))
+        x = self.norm(x.permute(0, 2, 1)).permute(0, 2, 1)
+        for layer in self.enc:
+            x = layer(x)
+        return x
+
+
+class Head(nn.Module):
+    def __init__(self, in_features, enc_features, mlp_ratio, depth):
+        super().__init__()
+        self.norm = nn.BatchNorm1d(in_features)
+        self.enc = nn.ModuleList()
+        self.enc.append(nn.Linear(in_features, enc_features * mlp_ratio))
+        for i in range(depth):
+            self.enc.append(nn.ReLU())
+            self.enc.append(nn.Linear(enc_features * mlp_ratio, enc_features * mlp_ratio))
+        self.enc.append(nn.ReLU())
+        self.enc.append(nn.Linear(enc_features * mlp_ratio, enc_features))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.norm(x)
+        for layer in self.enc:
+            x = layer(x)
+
+        return x
 
 
 class PositionalEncoding(nn.Module):
@@ -291,7 +313,7 @@ class Transformer(nn.Module):
         self.pos_embed = PositionalEncoding(enc_features, p, max_len)
         self.cls = nn.Parameter(torch.zeros(1, 1, enc_features))
 
-        self.head = Embed(enc_features, n_classes, mlp_ratio, depth)
+        self.head = Head(enc_features, n_classes, mlp_ratio, depth)
 
         self.blocks = nn.ModuleList([
             Block(
@@ -308,7 +330,7 @@ class Transformer(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.pos_embed(self.embed(x))
-        cls = self.cls.expand(x.shape(0), -1, -1)
+        cls = self.cls.expand(x.size(0), -1, -1)
         x = torch.cat([cls, x], dim=1)
 
         for block in self.blocks:
