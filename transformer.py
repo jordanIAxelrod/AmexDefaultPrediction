@@ -61,9 +61,9 @@ class Attention(nn.Module):
         """
         Run forward pass
         :param x: torch.Tensor
-             Shape `(n_smaples, n_patches + 1, dim)`.
+             Shape `(n_samples, n_patches + 1, dim)`.
         :return: torch.Tensor
-             Shape `(n_smaples, n_patches + 1, dim)`.
+             Shape `(n_samples, n_patches + 1, dim)`.
         """
         n_samples, n_tokens, dim = x.shape
 
@@ -297,15 +297,15 @@ class Transformer(nn.Module):
     def __init__(
             self,
             in_features,
-            enc_features,
-            n_heads,
-            qkv_bias,
-            mlp_ratio,
-            p,
-            attn_p,
-            max_len,
-            n_classes,
-            depth
+            enc_features: int = 100,
+            n_heads: int = 10,
+            qkv_bias: bool = True,
+            mlp_ratio: int = 6,
+            p: float = .1,
+            attn_p: float=.1,
+            max_len: int=13,
+            n_classes: int=1,
+            depth: int=10
     ):
         super().__init__()
 
