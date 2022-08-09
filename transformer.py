@@ -256,12 +256,10 @@ class Head(nn.Module):
     def __init__(self, in_features, enc_features, mlp_ratio, depth):
         super().__init__()
         self.norm = nn.BatchNorm1d(in_features)
-        self.enc = nn.ModuleList()
-        self.enc.append(nn.Linear(in_features, enc_features * mlp_ratio))
-        for i in range(depth):
-            self.enc.append(nn.ReLU())
+        self.enc = nn.ModuleList([nn.Linear(in_features, enc_features * mlp_ratio), nn.ReLU()])
+        for i in range(1):
             self.enc.append(nn.Linear(enc_features * mlp_ratio, enc_features * mlp_ratio))
-        self.enc.append(nn.ReLU())
+            self.enc.append(nn.ReLU())
         self.enc.append(nn.Linear(enc_features * mlp_ratio, enc_features))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -285,12 +283,10 @@ class PositionalEncoding(nn.Module):
         pos_encoding[:, 1::2] = torch.cos(positions_list * division_term)
 
         pos_encoding[:, 0::2] = torch.sin(positions_list * division_term)
-
-        pos_encoding = pos_encoding.unsqueeze(0).transpose(0, 1)
         self.register_buffer("pos_encoding", pos_encoding)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.dropout(x + self.pos_encoding[:x.size(0), :])
+        return self.dropout(x + self.pos_encoding[:x.size(1), :].expand(x.size(0),x.size(1),x.size(2)))
 
 
 class Transformer(nn.Module):
@@ -308,7 +304,7 @@ class Transformer(nn.Module):
             depth: int=10
     ):
         super().__init__()
-
+        self.norm = nn.BatchNorm1d(in_features)
         self.embed = Embed(in_features, enc_features, mlp_ratio, depth)
         self.pos_embed = PositionalEncoding(enc_features, p, max_len)
         self.cls = nn.Parameter(torch.zeros(1, 1, enc_features))
@@ -327,9 +323,10 @@ class Transformer(nn.Module):
             )
             for _ in range(depth)
         ])
-
+        self.sigmoid = nn.Sigmoid()
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.pos_embed(self.embed(x))
+
+        x = self.pos_embed(self.embed(self.norm(x.permute(0,2,1)).permute(0,2,1)))
         cls = self.cls.expand(x.size(0), -1, -1)
         x = torch.cat([cls, x], dim=1)
 
@@ -337,5 +334,4 @@ class Transformer(nn.Module):
             x = block(x)
 
         final_cls = x[:, 0]
-
-        return self.head(final_cls)
+        return self.sigmoid(self.head(final_cls))

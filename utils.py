@@ -12,9 +12,7 @@ import torch
 from sklearn.model_selection import train_test_split
 import torch.optim as optim
 
-
-
-
+import datetime as dt
 import pandas as pd
 import numpy as np
 
@@ -27,37 +25,46 @@ def load_data(file_path):
     Output:
         pandas data frame of cleaned data
     """
-    
-    parquet_file = file_path
-    df = pd.read_parquet(parquet_file,engine="auto")
-    df["obs_count"] = df[['customer_ID','S_2']].groupby(['customer_ID']).transform('count')
 
+    parquet_file = file_path
+
+    df = pd.read_parquet(parquet_file, engine="auto")
+    print("Data read")
+    print(df.head())
+    df["obs_count"] = df[['customer_ID', 'S_2']].groupby(['customer_ID']).transform('count')
+    print(df["obs_count"])
     # a) add time time index
-    df13 = df[df['obs_count']==13]
-    new_col =  [i for i in range(13)]*int(len(df13)/13)
-    df13.insert(2, "time_id",new_col, True)
+    df13 = df[df["obs_count"] == 13]
+    print(len(pd.unique(df13["customer_ID"])))
+    new_col = [i for i in range(13)] * (len(df13) // 13)
+    # new_col = []
+    # customers = pd.unique(df['customer_ID'].astype(str) + " " + df['obs_count'].astype(str))
+    # for i in customers:
+    #     x = int(i.split(" ")[1])
+    #     for j in range(x):
+    #         new_col.append(j)
+    df13.insert(2, "time_id", new_col, True)
 
     # b) turn categorical to binary variables
+    col_list = []
     for cat in categorical_vars:
-        new_cols = pd.get_dummies(df13[cat],prefix=cat)
-        df13 = pd.concat((df13, new_cols), axis=1)
-        df13 = df13.drop([cat], axis=1) #drop cat col
-    
+        new_cols = pd.get_dummies(df13[cat], prefix=cat)
+        col_list.append(new_cols)
+        df13 = df13.drop([cat], axis=1)  # drop cat col
+    df13 = pd.concat((df13, *col_list), axis=1)
+    print("Finish categoricals")
+
     # c) fill nas and make numeric
-    df13 = df13.fillna(df13.mean()) 
-    features =  list(df13.columns.difference(non_features)) #remove target, old time id
-    df13[features] = df13[features].apply(pd.to_numeric) #convert features to numeric
+    df13 = df13.fillna(0)
+    features = list(df13.columns.difference(non_features))  # remove target, old time id
+    df13[features] = df13[features].apply(pd.to_numeric)  # convert features to numeric
 
-    df13.sort_values('customer_ID')
+    df13.sort_values(['customer_ID',"time_id"])
 
-    return(df13)
-
-
+    return df13
 
 
-    
-
-### amex metric
+# amex metric
 
 
 class AmexMetric(Metric):
@@ -74,7 +81,7 @@ class AmexMetric(Metric):
 
     def __init__(self):
         super().__init__()
-        
+
         self.add_state("all_true", default=[], dist_reduce_fx="cat")
         self.add_state("all_pred", default=[], dist_reduce_fx="cat")
 
@@ -84,13 +91,12 @@ class AmexMetric(Metric):
         )
 
     def update(self, y_pred: torch.Tensor, y_true: torch.Tensor):
-        
         y_true = y_true.double()
         y_pred = y_pred.double()
-        
+
         self.all_true.append(y_true)
         self.all_pred.append(y_pred)
-        
+
     def compute(self):
         y_true = torch.cat(self.all_true)
         y_pred = torch.cat(self.all_pred)
@@ -109,7 +115,7 @@ class AmexMetric(Metric):
 
         # default rate captured at 4%
         d = target[four_pct_filter].sum() / n_pos
-
+        print(d)
         # weighted gini coefficient
         lorentz = (target / n_pos).cumsum(dim=0)
         gini = ((lorentz - cum_norm_weight) * weight).sum()
@@ -119,7 +125,7 @@ class AmexMetric(Metric):
 
         # normalized weighted gini coefficient
         g = gini / gini_max
-        
+
         return 0.5 * (g + d)
 
 
@@ -154,90 +160,106 @@ def amex_metric(y_true: pd.DataFrame, y_pred: pd.DataFrame) -> float:
     return 0.5 * (g + d)
 
 
-
-
-class LoadedData():
-    def __init__(self,df):
-        #extract feature info
+class LoadedData:
+    def __init__(self, df):
+        # extract feature info
         features = list(df.columns.difference(non_features))
         in_features = len(features)
 
-        #gen tensors
+        # gen tensors
         all_tensor_x = torch.reshape(torch.tensor(df[features].to_numpy()), (-1, 13, in_features)).float()
         all_tensor_y = torch.tensor(df.groupby('customer_ID').first()['target'].to_numpy()).float()
 
         # split
-        X_trainval, X_test, y_trainval, y_test = train_test_split(all_tensor_x, all_tensor_y, test_size=0.1, random_state=1)
-        
-        
-        #training_set = Dataset(X_trainval, y_trainval)
-        #validation_set = Dataset(X_test, y_test)
+        X_trainval, X_test, y_trainval, y_test = train_test_split(all_tensor_x, all_tensor_y, test_size=0.1,
+                                                                  random_state=1)
+
+        # training_set = Dataset(X_trainval, y_trainval)
+        # validation_set = Dataset(X_test, y_test)
 
         training_set = torch.utils.data.TensorDataset(X_trainval, y_trainval)
         validation_set = torch.utils.data.TensorDataset(X_test, y_test)
 
+        print(y_trainval.shape[0], y_test.shape[0])
 
-        #initialise data loaders
-        batch_size = 5
+        # initialise data loaders
+        batch_size = 50
         trainloader = torch.utils.data.DataLoader(training_set, batch_size=batch_size,
-                                                shuffle=True, num_workers=1)
+                                                  shuffle=True, num_workers=1)
         testloader = torch.utils.data.DataLoader(validation_set, batch_size=batch_size,
-                                                shuffle=False, num_workers=1)
+                                                 shuffle=False, num_workers=1)
 
-        #add attributes
+        # add attributes
         self.loadedTrain = trainloader
         self.loadedTest = testloader
 
 
+def train_model(dfLoaded_, model_, epoch):
+    criterion = torch.nn.BCELoss()
+    optimizer = optim.Adam(model_.parameters(), lr=0.00005)
+
+    running_loss = 0.0
+    print("-" * 25 + str(epoch) + "-" * 25)
+    for i, data in enumerate(dfLoaded_.loadedTrain, 0):
+        inputs, labels = data
+
+        labels = torch.reshape(labels, (labels.shape[0], 1))
+        optimizer.zero_grad()
+        # print(inputs.shape)
+        outputs = model_(inputs)
+        # print(outputs)
+        # print(labels)
+
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+        # print statistics
+        running_loss += loss.item()
+        fmt = "%m.%d.%Y"
+        torch.save(
+            model_,
+            "Models/" + f"{dt.datetime.now().strftime(fmt)} Transformer Encoder Only LARGE{epoch}.pt"
+        )
+        if i % 20 == 0:
+            print(loss.detach().item())
+        # pprint for each epoch
+    print('loss:' + str(round(running_loss / (i + 1), 4)))
 
 
-def train_model(dfLoaded_,model_):
-    criterion = torch.nn.L1Loss()
-    optimizer = optim.SGD(model_.parameters(), lr=0.001, momentum=0.9)
-
-    for epoch in range(2):  # loop over the dataset multiple times
-        running_loss = 0.0
-        for i, data in enumerate(dfLoaded_.loadedTrain, 0):
-            inputs, labels = data
-            labels = torch.reshape(labels, (labels.shape[0],1)) 
-            optimizer.zero_grad()
-            #print(inputs.shape)
-            outputs = model_(inputs)
-            #print(outputs)
-            #print(labels)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
-            # print statistics
-            running_loss += loss.item()
-        #pprint for each epoch
-        print('loss:' + str(round(running_loss / 100,4)))
-
-
-
-def eval_model(dfLoaded_,model_):
+def eval_model(dfLoaded_, model_):
     correct = 0
     total = 0
 
     correct_positives = 0
     total_positives = 0
 
+    all_labels = []
+    all_predictions = []
     # since we're not training, we don't need to calculate the gradients for our outputs
     with torch.no_grad():
-        for i,data in  enumerate(dfLoaded_.loadedTrain, 0):
+        for i, data in enumerate(dfLoaded_.loadedTest, 0):
             inputs, labels = data
-            labels = torch.reshape(labels, (labels.shape[0],1))
-            labels_pred = [ 1 if i >0.5 else 0 for i in labels]
+            labels = torch.reshape(labels, (labels.shape[0], 1))
+            labels_pred = [1 if i > 0.5 else 0 for i in labels]
             # calculate outputs by running inputs through the network
             outputs = model_(inputs)
-            predicted = [ 1 if i >0.5 else 0 for i in outputs]
+            predicted = [1 if i > 0.5 else 0 for i in outputs]
             # add to counts
             total += labels.size(0)
-            correct += sum([ predicted[i] == labels_pred[i] for i in range(len(predicted))])
-            
-            total_positives += sum(  [labels_pred[i] for i in range(len(labels_pred))])
-            correct_positives +=  sum(  [ labels_pred[i]*(predicted[i] == labels_pred[i]) for i in range(len(labels_pred))  ] )
+            correct += sum([predicted[i] == labels_pred[i] for i in range(len(predicted))])
 
-    print("Accuracy of the network on the %d test datapoints: %d percent " %(total,100* correct // total ) )
-    print("Accuracy of the network on the %d positive test datapoints: %d percent " %(total_positives,100* correct_positives // total_positives ) )
-    
+            total_positives += sum([labels_pred[i] for i in range(len(labels_pred))])
+            correct_positives += sum(
+                [labels_pred[i] * (predicted[i] == labels_pred[i]) for i in range(len(labels_pred))])
+            all_labels.append(labels)
+            all_predictions.append(outputs)
+    all_labels = torch.cat(all_labels, dim=0)
+    all_predictions = torch.cat(all_predictions, dim=0)
+    amexMetric_ = amex_metric(
+        pd.DataFrame(all_labels.detach().numpy(), columns=["target"]),
+        pd.DataFrame(all_predictions.detach().numpy(), columns=["prediction"]))
+
+    print("Accuracy of the network on the %d test datapoints: %d percent " % (total, 100 * correct // total))
+    print("Accuracy of the network on the %d positive test datapoints: %d percent " % (
+        total_positives, 100 * correct_positives // total_positives))
+    print("The Amex metric is : ", amexMetric_)
