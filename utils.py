@@ -61,9 +61,9 @@ def load_data(file_path):
 
         dfs = [df_temp]
         for j in range(0,13-i):
-            df_temp = copy.deepcopy(row_template)
-            df_temp["time_id"] = j #add padded value by time
-            dfs.append(df_temp)
+            df_temp_ = copy.deepcopy(row_template)
+            df_temp_["time_id"] = j #add padded value by time
+            dfs.append(df_temp_)
 
         df_concat = pd.concat(dfs)
 
@@ -84,7 +84,7 @@ def load_data(file_path):
     features =  list(df_padded.columns.difference(non_features)) #remove target, old time id
     df_padded[features] = df_padded[features].apply(pd.to_numeric) #convert features to numeric
 
-    df_padded.sort_values('customer_ID')
+    df_padded.sort_values(by=['customer_ID','Age'], ascending=False) #sort values by id and time sequence
 
     return(df_padded)
 
