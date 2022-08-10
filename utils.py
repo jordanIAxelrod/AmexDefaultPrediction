@@ -15,54 +15,78 @@ import torch.optim as optim
 import datetime as dt
 import pandas as pd
 import numpy as np
+import copy
 
 
 def load_data(file_path):
     """
-    loads data from file path
+    loads data from file path. Pads data for customers with less than 13 periods of data
     Args:
         file_path: file path
     Output:
         pandas data frame of cleaned data
     """
-
+    
     parquet_file = file_path
+    df = pd.read_parquet(parquet_file,engine="auto")
+    df["obs_count"] = df[['customer_ID','S_2']].groupby(['customer_ID']).transform('count')
 
-    df = pd.read_parquet(parquet_file, engine="auto")
-    print("Data read")
-    print(df.head())
-    df["obs_count"] = df[['customer_ID', 'S_2']].groupby(['customer_ID']).transform('count')
-    print(df["obs_count"])
     # a) add time time index
-    df13 = df[df["obs_count"] == 13]
-    print(len(pd.unique(df13["customer_ID"])))
-    new_col = [i for i in range(13)] * (len(df13) // 13)
-    # new_col = []
-    # customers = pd.unique(df['customer_ID'].astype(str) + " " + df['obs_count'].astype(str))
-    # for i in customers:
-    #     x = int(i.split(" ")[1])
-    #     for j in range(x):
-    #         new_col.append(j)
-    df13.insert(2, "time_id", new_col, True)
+    df13 = df[df['obs_count']==13]
+    new_col =  [i for i in range(13)]*int(len(df13)/13)
+    df13.insert(2, "time_id",new_col, True)
 
-    # b) turn categorical to binary variables
-    col_list = []
+    # b) padd incomplete series
+    
+    #store features
+    features = list(df13.columns.difference(non_features))
+    #gen new df list - we'll eventually merge them all
+    padded_dfs =[df13]
+
+    for i in range(1,13):
+        # first we prep a chunk of good data
+        df_temp = df[df['obs_count']==i]
+        new_col =  [i for i in range(13-i,13)]*int(len(df_temp)/(i))
+        df_temp.insert(2, "time_id",new_col, True)
+        
+        #next we'll pad with -1000
+        pad_value = -10000
+        row_template = df_temp[df_temp["time_id"]==12]
+
+        for feature in features:
+            row_template[feature].values[:] = pad_value
+        row_template["S_2"] = pad_value #force s_2 to minus 1000, this won't actually matter though
+        row_template["time_id"] = 0 #force to 0
+
+
+        dfs = [df_temp]
+        for j in range(0,13-i):
+            df_temp = copy.deepcopy(row_template)
+            df_temp["time_id"] = j #add padded value by time
+            dfs.append(df_temp)
+
+        df_concat = pd.concat(dfs)
+
+        # append df
+        padded_dfs.append(df_concat)
+
+
+    df_padded = pd.concat(padded_dfs)  
+
+    # c) turn categorical to binary variables
     for cat in categorical_vars:
-        new_cols = pd.get_dummies(df13[cat], prefix=cat)
-        col_list.append(new_cols)
-        df13 = df13.drop([cat], axis=1)  # drop cat col
-    df13 = pd.concat((df13, *col_list), axis=1)
-    print("Finish categoricals")
+        new_cols = pd.get_dummies(df_padded[cat],prefix=cat)
+        df_padded = pd.concat((df_padded, new_cols), axis=1)
+        df_padded = df_padded.drop([cat], axis=1) #drop cat col
+    
+    # d) fill nas and make numeric
+    df_padded = df_padded.fillna(df_padded.mean()) 
+    features =  list(df_padded.columns.difference(non_features)) #remove target, old time id
+    df_padded[features] = df_padded[features].apply(pd.to_numeric) #convert features to numeric
 
-    # c) fill nas and make numeric
-    df13 = df13.fillna(0)
-    features = list(df13.columns.difference(non_features))  # remove target, old time id
-    df13[features] = df13[features].apply(pd.to_numeric)  # convert features to numeric
+    df_padded.sort_values('customer_ID')
 
-    df13.sort_values(['customer_ID',"time_id"])
-
-    return df13
-
+    return(df_padded)
 
 # amex metric
 
