@@ -84,7 +84,7 @@ def load_data(file_path):
     features =  list(df_padded.columns.difference(non_features)) #remove target, old time id
     df_padded[features] = df_padded[features].apply(pd.to_numeric) #convert features to numeric
 
-    df_padded.sort_values(by=['customer_ID','Age'], ascending=False) #sort values by id and time sequence
+    df_padded.sort_values(by=['customer_ID','Age'], ascending=True) #sort values by id and time sequence
 
     return(df_padded)
 
