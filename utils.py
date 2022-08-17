@@ -2,7 +2,7 @@
 helper functions, including functions that load data and train model
 """
 
-from config import categorical_vars, non_features
+from config import *
 
 from torchmetrics import Metric
 from torchmetrics.utilities import rank_zero_warn
@@ -16,6 +16,7 @@ import datetime as dt
 import pandas as pd
 import numpy as np
 import copy
+from tqdm import tqdm
 
 
 def load_data(file_path):
@@ -26,43 +27,42 @@ def load_data(file_path):
     Output:
         pandas data frame of cleaned data
     """
-    
+
     parquet_file = file_path
-    df = pd.read_parquet(parquet_file,engine="auto")
-    df["obs_count"] = df[['customer_ID','S_2']].groupby(['customer_ID']).transform('count')
+    df = pd.read_parquet(parquet_file, engine="auto")
+    df["obs_count"] = df[['customer_ID', 'S_2']].groupby(['customer_ID']).transform('count')
 
     # a) add time time index
-    df13 = df[df['obs_count']==13]
-    new_col =  [i for i in range(13)]*int(len(df13)/13)
-    df13.insert(2, "time_id",new_col, True)
+    df13 = df[df['obs_count'] == 13]
+    new_col = [i for i in range(13)] * int(len(df13) / 13)
+    df13.insert(2, "time_id", new_col, True)
 
     # b) padd incomplete series
-    
-    #store features
-    features = list(df13.columns.difference(non_features))
-    #gen new df list - we'll eventually merge them all
-    padded_dfs =[df13]
 
-    for i in range(1,13):
+    # store features
+    features = list(df13.columns.difference(non_features))
+    # gen new df list - we'll eventually merge them all
+    padded_dfs = [df13]
+
+    for i in range(1, 13):
         # first we prep a chunk of good data
-        df_temp = df[df['obs_count']==i]
-        new_col =  [i for i in range(13-i,13)]*int(len(df_temp)/(i))
-        df_temp.insert(2, "time_id",new_col, True)
-        
-        #next we'll pad with -1000
+        df_temp = df[df['obs_count'] == i]
+        new_col = [i for i in range(13 - i, 13)] * int(len(df_temp) / (i))
+        df_temp.insert(2, "time_id", new_col, True)
+
+        # next we'll pad with -1000
         pad_value = -10000
-        row_template = df_temp[df_temp["time_id"]==12]
+        row_template = df_temp[df_temp["time_id"] == 12]
 
         for feature in features:
             row_template[feature].values[:] = pad_value
-        row_template["S_2"] = pad_value #force s_2 to minus 1000, this won't actually matter though
-        row_template["time_id"] = 0 #force to 0
-
+        row_template["S_2"] = pad_value  # force s_2 to minus 1000, this won't actually matter though
+        row_template["time_id"] = 0  # force to 0
 
         dfs = [df_temp]
-        for j in range(0,13-i):
+        for j in range(0, 13 - i):
             df_temp_ = copy.deepcopy(row_template)
-            df_temp_["time_id"] = j #add padded value by time
+            df_temp_["time_id"] = j  # add padded value by time
             dfs.append(df_temp_)
 
         df_concat = pd.concat(dfs)
@@ -70,23 +70,23 @@ def load_data(file_path):
         # append df
         padded_dfs.append(df_concat)
 
-
-    df_padded = pd.concat(padded_dfs)  
+    df_padded = pd.concat(padded_dfs)
 
     # c) turn categorical to binary variables
     for cat in categorical_vars:
-        new_cols = pd.get_dummies(df_padded[cat],prefix=cat)
+        new_cols = pd.get_dummies(df_padded[cat], prefix=cat)
         df_padded = pd.concat((df_padded, new_cols), axis=1)
-        df_padded = df_padded.drop([cat], axis=1) #drop cat col
-    
+        df_padded = df_padded.drop([cat], axis=1)  # drop cat col
+
     # d) fill nas and make numeric
-    df_padded = df_padded.fillna(df_padded.mean()) 
-    features =  list(df_padded.columns.difference(non_features)) #remove target, old time id
-    df_padded[features] = df_padded[features].apply(pd.to_numeric) #convert features to numeric
+    df_padded = df_padded.fillna(df_padded.mean())
+    features = list(df_padded.columns.difference(non_features))  # remove target, old time id
+    df_padded[features] = df_padded[features].apply(pd.to_numeric)  # convert features to numeric
 
-    df_padded.sort_values(by=['customer_ID','Age'], ascending=True) #sort values by id and time sequence
+    df_padded.sort_values(by=['customer_ID', 'Age'], ascending=True)  # sort values by id and time sequence
 
-    return(df_padded)
+    return (df_padded)
+
 
 # amex metric
 
@@ -218,20 +218,17 @@ class LoadedData:
         self.loadedTest = testloader
 
 
-def train_model(dfLoaded_, model_, epoch):
+def train_model(train_loader, model_, epoch):
     criterion = torch.nn.BCELoss()
     optimizer = optim.Adam(model_.parameters(), lr=0.00005)
 
     running_loss = 0.0
     print("-" * 25 + str(epoch) + "-" * 25)
-    for i, data in enumerate(dfLoaded_.loadedTrain, 0):
-        inputs, labels = data
-
+    for i, data in enumerate(train_loader):
+        inputs, labels = data[0].to(device), data[1].to(device)
         labels = torch.reshape(labels, (labels.shape[0], 1))
         optimizer.zero_grad()
-        # print(inputs.shape)
         outputs = model_(inputs)
-        # print(outputs)
         # print(labels)
 
         loss = criterion(outputs, labels)
@@ -240,17 +237,18 @@ def train_model(dfLoaded_, model_, epoch):
         # print statistics
         running_loss += loss.item()
         fmt = "%m.%d.%Y"
-        torch.save(
-            model_,
-            "Models/" + f"{dt.datetime.now().strftime(fmt)} Transformer Encoder Only LARGE{epoch}.pt"
-        )
-        if i % 20 == 0:
+
+        if i % 100 == 0:
             print(loss.detach().item())
         # pprint for each epoch
     print('loss:' + str(round(running_loss / (i + 1), 4)))
+    torch.save(
+        model_,
+        "Models/" + f"{dt.datetime.now().strftime(fmt)} Transformer Encoder Only LARGE {epoch}.pt"
+    )
 
 
-def eval_model(dfLoaded_, model_):
+def eval_model(test_loader, model_):
     correct = 0
     total = 0
 
@@ -261,8 +259,8 @@ def eval_model(dfLoaded_, model_):
     all_predictions = []
     # since we're not training, we don't need to calculate the gradients for our outputs
     with torch.no_grad():
-        for i, data in enumerate(dfLoaded_.loadedTest, 0):
-            inputs, labels = data
+        for i, data in enumerate(test_loader):
+            inputs, labels = data[0].to(device), data[1].to(device)
             labels = torch.reshape(labels, (labels.shape[0], 1))
             labels_pred = [1 if i > 0.5 else 0 for i in labels]
             # calculate outputs by running inputs through the network
