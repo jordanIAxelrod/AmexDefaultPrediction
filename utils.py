@@ -218,13 +218,13 @@ class LoadedData:
         self.loadedTest = testloader
 
 
-def train_model(train_loader, model_, epoch):
+def train_model(train_loader, model_: torch.nn.Module, optimizer, epoch, length):
     criterion = torch.nn.BCELoss()
-    optimizer = optim.Adam(model_.parameters(), lr=0.00005)
 
+    model_.train()
     running_loss = 0.0
     print("-" * 25 + str(epoch) + "-" * 25)
-    for i, data in enumerate(train_loader):
+    for i, data in tqdm(enumerate(train_loader), total=length // batch_size + 1):
         inputs, labels = data[0].to(device), data[1].to(device)
         labels = torch.reshape(labels, (labels.shape[0], 1))
         optimizer.zero_grad()
@@ -236,22 +236,24 @@ def train_model(train_loader, model_, epoch):
         optimizer.step()
         # print statistics
         running_loss += loss.item()
-        fmt = "%m.%d.%Y"
+
 
         if i % 100 == 0:
             print(loss.detach().item())
         # pprint for each epoch
+    fmt = "%m.%d.%Y"
     print('loss:' + str(round(running_loss / (i + 1), 4)))
     torch.save(
         model_,
         "Models/" + f"{dt.datetime.now().strftime(fmt)} Transformer Encoder Only LARGE {epoch}.pt"
     )
+    return running_loss
 
 
-def eval_model(test_loader, model_):
+def eval_model(test_loader, model_, length):
     correct = 0
     total = 0
-
+    model_.eval()
     correct_positives = 0
     total_positives = 0
 
@@ -259,7 +261,7 @@ def eval_model(test_loader, model_):
     all_predictions = []
     # since we're not training, we don't need to calculate the gradients for our outputs
     with torch.no_grad():
-        for i, data in enumerate(test_loader):
+        for i, data in tqdm(enumerate(test_loader), total=length // 150 + 1):
             inputs, labels = data[0].to(device), data[1].to(device)
             labels = torch.reshape(labels, (labels.shape[0], 1))
             labels_pred = [1 if i > 0.5 else 0 for i in labels]
@@ -273,8 +275,8 @@ def eval_model(test_loader, model_):
             total_positives += sum([labels_pred[i] for i in range(len(labels_pred))])
             correct_positives += sum(
                 [labels_pred[i] * (predicted[i] == labels_pred[i]) for i in range(len(labels_pred))])
-            all_labels.append(labels)
-            all_predictions.append(outputs)
+            all_labels.append(labels.cpu())
+            all_predictions.append(outputs.cpu())
     all_labels = torch.cat(all_labels, dim=0)
     all_predictions = torch.cat(all_predictions, dim=0)
     amexMetric_ = amex_metric(
@@ -285,3 +287,4 @@ def eval_model(test_loader, model_):
     print("Accuracy of the network on the %d positive test datapoints: %d percent " % (
         total_positives, 100 * correct_positives // total_positives))
     print("The Amex metric is : ", amexMetric_)
+    return amexMetric_

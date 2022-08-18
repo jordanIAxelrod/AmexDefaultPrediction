@@ -45,7 +45,7 @@ def clean(data_url, out_url, chunksize):
         count += 1
 
 
-def make_csv(file_path: str, start_end_info: dict, idx: list):
+def make_csv(file_path: str, start_end_info: dict, idx: list, kind: str):
     start = start_end_info[str(idx[0])]["start"]
     n_rows = sum([start_end_info[str(i)]["n_rows"] for i in idx])
     df = pd.read_csv(
@@ -61,7 +61,8 @@ def make_csv(file_path: str, start_end_info: dict, idx: list):
         local = df.loc[start: start + n_rows - 1, :]
         new_col = list(range(13 - n_rows, 13))
         if len(pd.unique(local['customer_ID'])) > 1:
-            raise ValueError(f"Not all the same customer, index is {start} customers are {pd.unique(local['customer_ID'])}")
+            raise ValueError(
+                f"Not all the same customer, index is {start} customers are {pd.unique(local['customer_ID'])}")
         try:
             local.insert(2, "time_id", new_col, True)
         except Exception as e:
@@ -75,7 +76,33 @@ def make_csv(file_path: str, start_end_info: dict, idx: list):
             new_rows.append(local)
             local = pd.concat(new_rows)
         features = list(local.columns.difference(non_features))
-        local[features].to_csv(f"inputs/{i}.csv", index=False)
+        if kind == "train":
+            local[features].to_csv(f"inputs/{i}.csv", index=False)
+        else:
+            local[features].to_csv(f"inputs/submission/i.csv", index=False)
+
+
+def start_end_dict(file_path: str, chunksize: int, kind: str):
+    df = pd.read_csv(file_path, chunksize=chunksize)
+    start_end_dicts = {}
+    count = 0
+    for chunk in df:
+        group = chunk.groupby(["customer_ID"], as_index=False)
+        n_rows = group["customer_ID"].count()
+        idxs = group.first().index
+        cust_IDs = pd.unique(chunk["customer_ID"])
+        for i in range(len(n_rows)):
+            start_end_dicts[count] = {
+                "start": idxs[i],
+                "n_rows": n_rows[i],
+                "cust_ID": cust_IDs[i]
+            }
+    if kind == "train":
+        out_url = "inputs/start_end_info.json"
+    else:
+        out_url = "inputs/submission/start_end_info.json"
+    with open(out_url, "w") as file:
+        json.dump(start_end_dicts, file)
 
 
 if __name__ == "__main__":
@@ -88,5 +115,5 @@ if __name__ == "__main__":
     for idx in tqdm(keys):
         sub.append(idx)
         if len(sub) == 100000 or idx == keys[-1]:
-            make_csv("inputs/train_data_cat.csv", start_end, sub)
+            make_csv("inputs/train_data_cat.csv", start_end, sub, "train")
             sub = []

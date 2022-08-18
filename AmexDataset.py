@@ -9,8 +9,12 @@ from config import *
 
 class AmexDataset(Dataset):
 
-    def __init__(self, data_dir: str, target_path: str):
-        self.target = pd.read_csv(target_path)
+    def __init__(self, data_dir: str, target_path: str=None):
+
+        if target_path:
+            self.target = pd.read_csv(target_path)
+        else:
+            self.target = None
         self.data_dir = data_dir
         self.data_files = os.listdir(data_dir)
         self.data_files = [file for file in self.data_files if file.split("/")[-1].split(".")[0].isnumeric()]
@@ -25,4 +29,7 @@ class AmexDataset(Dataset):
         df = pd.read_csv(path)
         features = list(df.columns.difference(non_features))
         df.replace(to_replace=-np.infty, value=0, inplace=True)
-        return torch.Tensor(df[features].to_numpy()), torch.Tensor([self.target.loc[idx, "target"]])
+        if self.target is not None:
+            return torch.Tensor(df[features].to_numpy()), torch.Tensor([self.target.loc[idx, "target"]])
+        else:
+            return torch.Tensor(df[features].to_numpy())
