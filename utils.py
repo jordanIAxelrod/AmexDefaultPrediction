@@ -225,10 +225,10 @@ def train_model(train_loader, model_: torch.nn.Module, optimizer, epoch, length)
     running_loss = 0.0
     print("-" * 25 + str(epoch) + "-" * 25)
     for i, data in tqdm(enumerate(train_loader), total=length // batch_size + 1):
-        inputs, labels = data[0].to(device), data[1].to(device)
+        inputs, labels, mask = data[0].to(device), data[1].to(device), data[2].to(device)
         labels = torch.reshape(labels, (labels.shape[0], 1))
         optimizer.zero_grad()
-        outputs = model_(inputs)
+        outputs = model_(inputs, mask)
         # print(labels)
 
         loss = criterion(outputs, labels)
@@ -262,11 +262,11 @@ def eval_model(test_loader, model_, length):
     # since we're not training, we don't need to calculate the gradients for our outputs
     with torch.no_grad():
         for i, data in tqdm(enumerate(test_loader), total=length // 150 + 1):
-            inputs, labels = data[0].to(device), data[1].to(device)
+            inputs, labels, mask = data[0].to(device), data[1].to(device), data[2].to(device)
             labels = torch.reshape(labels, (labels.shape[0], 1))
             labels_pred = [1 if i > 0.5 else 0 for i in labels]
             # calculate outputs by running inputs through the network
-            outputs = model_(inputs)
+            outputs = model_(inputs, mask)
             predicted = [1 if i > 0.5 else 0 for i in outputs]
             # add to counts
             total += labels.size(0)

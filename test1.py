@@ -27,13 +27,14 @@ if __name__ == "__main__":
     print("Data Loaded")
 
     train_loader = torch.utils.data.DataLoader(data, batch_size=batch_size,
-                                               shuffle=True, num_workers=1)
+                                               shuffle=True, num_workers=5)
 
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=150,
                                               shuffle=True, num_workers=5)
     try:
         model = torch.load("Models/08.18.2022 Transformer Encoder Only LARGE 0.pt")
-    except:
+        raise FileNotFoundError
+    except FileNotFoundError:
         model = Transformer(in_features=in_features,
                             enc_features=132,
                             n_heads=11,
@@ -45,16 +46,17 @@ if __name__ == "__main__":
                             n_classes=1,
                             depth=15)
 
-    optimizer = optim.Adam(model.parameters(), lr=0.00005)
+    optimizer = optim.Adam(model.parameters(), lr=0.000001)
     model.to(device)
     print(device)
     train_loss = []
     amex = []
     for epoch in range(25):
-        amex.append(eval_model(test_loader=test_loader,
-                               model_=model, length=test_len))
+
         train_loss.append(train_model(train_loader=train_loader,
                                       model_=model, optimizer=optimizer, epoch=epoch, length=train_len))
+        amex.append(eval_model(test_loader=test_loader,
+                               model_=model, length=test_len))
     plt.plot(list(range(len(amex))), amex, color="red", label="Amex Metric")
     plt.plot(list(range(len(train_loss))), train_loss, color="blue", label="Training Loss")
     plt.legend()

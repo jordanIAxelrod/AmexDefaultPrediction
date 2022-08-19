@@ -13,6 +13,7 @@ import math
 
 import torch
 import torch.nn as nn
+from config import *
 
 
 class Attention(nn.Module):
@@ -57,11 +58,13 @@ class Attention(nn.Module):
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_p)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, mask) -> torch.Tensor:
         """
         Run forward pass
         :param x: torch.Tensor
              Shape `(n_samples, n_patches + 1, dim)`.
+        :param mask:
+            mask of the attention
         :return: torch.Tensor
              Shape `(n_samples, n_patches + 1, dim)`.
         """
@@ -82,7 +85,9 @@ class Attention(nn.Module):
         dp = (
                      q @ k_t
              ) * self.scale  # (n_samples, n_heads, n_patches + 1, n_patches + 1)
+        if mask is not None:
 
+            dp = dp.masked_fill(mask == 1, -1e20)
         attn = dp.softmax(dim=-1)
         attn = self.attn_drop(attn)
         weighted_avg = attn @ v  # (n_samples, n_heads, n_patches + 1, head_dim)
@@ -219,7 +224,7 @@ class Block(nn.Module):
             n_layers=n_layers,
         )
 
-    def forward(self, x) -> torch.Tensor:
+    def forward(self, x, mask) -> torch.Tensor:
         """
         Run forward pass
         :param x: torch.Tensor
@@ -227,7 +232,7 @@ class Block(nn.Module):
         :return: torch.Tensor
             Shape: `(n_samples, n_patches  + 1, out_features)`.
         """
-        x = x + self.attn(self.norm1(x))
+        x = x + self.attn(self.norm1(x), mask)
         x = x + self.mlp(self.norm2(x))
 
         return x
@@ -276,7 +281,7 @@ class PositionalEncoding(nn.Module):
 
         self.dropout = nn.Dropout(dropout_p)
 
-        pos_encoding = torch.zeros(max_len, enc_features)  # (max_len, enc_features)
+        pos_encoding = torch.zeros(max_len, enc_features).to(device)  # (max_len, enc_features)
         positions_list = torch.arange(0, max_len, dtype=torch.float).view(-1, 1)
         division_term = torch.exp(torch.arange(0, enc_features, 2).float() * (-math.log(10e4)) / enc_features)
 
@@ -286,7 +291,7 @@ class PositionalEncoding(nn.Module):
         self.register_buffer("pos_encoding", pos_encoding)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.dropout(x + self.pos_encoding[:x.size(1), :].expand(x.size(0),x.size(1),x.size(2)))
+        return self.dropout(x + self.pos_encoding[:x.size(1), :].expand(x.size(0), x.size(1), x.size(2)))
 
 
 class Transformer(nn.Module):
@@ -298,10 +303,10 @@ class Transformer(nn.Module):
             qkv_bias: bool = True,
             mlp_ratio: int = 6,
             p: float = .1,
-            attn_p: float=.1,
-            max_len: int=13,
-            n_classes: int=1,
-            depth: int=10
+            attn_p: float = .1,
+            max_len: int = 13,
+            n_classes: int = 1,
+            depth: int = 10
     ):
         super().__init__()
         self.norm = nn.BatchNorm1d(in_features)
@@ -324,14 +329,15 @@ class Transformer(nn.Module):
             for _ in range(depth)
         ])
         self.sigmoid = nn.Sigmoid()
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
 
-        x = self.pos_embed(self.embed(self.norm(x.permute(0,2,1)).permute(0,2,1)))
+
+    def forward(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        x = self.pos_embed(self.embed(self.norm(x.permute(0, 2, 1)).permute(0, 2, 1)))
         cls = self.cls.expand(x.size(0), -1, -1)
         x = torch.cat([cls, x], dim=1)
 
         for block in self.blocks:
-            x = block(x)
+            x = block(x, mask.unsqueeze(1).unsqueeze(2))
 
         final_cls = x[:, 0]
         return self.sigmoid(self.head(final_cls))
